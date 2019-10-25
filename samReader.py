@@ -1,3 +1,13 @@
+# This script is written to examine if all the mapped reads which are different in two SAM files belongs to the reads
+# that have altenrative option for mapping. this question arise when we were notcing that BAW MEM gives different SAM files for the same input FASTQ files.
+
+# This code gets two input file. 
+#  -The first input is the output of BamUtil (https://genome.sph.umich.edu/wiki/BamUtil) 
+# $ ../bin/bam diff --in1 testFiles/testDiff1.sam --in2 testFiles/testDiff2.sam --out results/diffOrderSam.log
+#  -The second input file is output of BWA-MEM. The code then extract the SAMs mapped reads which have the flag of "XA:", means alternative mapped to referebce genome does exist.
+# $ bwa mem ref.fa read1.fq read2.fq > aln.sam
+# The code output is the reads which are overlap and different between these two files.
+
 import csv 
 
 def ReadInputFile(fileName):
