@@ -65,7 +65,7 @@ def AssessGenomeSize(MappedData):
          raise Exception ( 'probably your SAM file does not have a header. Please include a SAM file with a header')
     return numberBps
 
-## to do: does SAM file starts with zer0 or one? Now it is assumed it starts with zero
+## to do: does SAM file starts with zero or one? Now it is assumed it starts with zero
 def ParseSAMForChipexo (MappedData,numberBps,first_read_len): 
     samInfo = SamInfo() 
     for i in range (len(numberBps)):
@@ -120,7 +120,16 @@ def CountPileupTags(samInfo,motif_locs,numberBps, expand_size):
     
     return tagsPileup
 
+def Generate_tagsPileup_dict (tagsPileup, expand_size):
+    tagsPileup_dict=dict()
+    
+    for i in range (-expand_size, expand_size + 1):    
+        tagsPileup_dict [i] = [tagsPileup.P[i + expand_size], tagsPileup.N[i + expand_size]]
 
+    
+    print  (tagsPileup_dict)
+    return (tagsPileup_dict)
+    
 def StatsTagsPileup_first(tagsPileup,expand_size):
     tagsPileup.avgDistN = 0.0
     tagsPileup.avgDistP = 0.0
@@ -184,13 +193,26 @@ def StatsTagsPileup_second(tagsPileup,expand_size):
 def main():
     expand_size     = 250   # expansion size at the right and left side of the center of motif for plotting tag pileup
     first_read_len  = 40  # to do: this should be extracted from SAM file
-    gffFile         = ReadInputFile('Reb1_396_24465_Genetrack.gff')
+    gffFile         = ReadInputFile('Reb1_396_24465_Chexmix.gff')
     motif_locs      = ParseGffFile (gffFile)
-    samFile         = ReadInputFile('Reb1_396_24465_Genetrack.sam')
+    samFile         = ReadInputFile('Reb1_396_24465_Chexmix.sam')
     numberBps       = AssessGenomeSize(samFile)
-    samInfo         = ParseSAMForChipexo (samFile,numberBps,first_read_len)
-    tagsPileup      = CountPileupTags (samInfo,motif_locs,numberBps, expand_size) 
+    samInfo         = ParseSAMForChipexo (samFile, numberBps, first_read_len)
+    tagsPileup      = CountPileupTags (samInfo, motif_locs, numberBps, expand_size) 
+    tagsPileup_dict = Generate_tagsPileup_dict(tagsPileup, expand_size)
 
+    fileM = open('output_tagPileup.txt','w')
+    fileM.write ('Distance from center of motif, Number of tags in positive strand, Number of tags in negative strand\n')
+    for i in range (-expand_size, expand_size + 1):
+        fileM.write(str(i))
+        fileM.write('  ')
+        fileM.write(str(tagsPileup_dict[i][0]))  
+        fileM.write('  ')
+        fileM.write(str(tagsPileup_dict[i][1]))  
+        fileM.write('  \n')
+       
+    fileM.close() 
+    
     StatsTagsPileup_first (tagsPileup, expand_size)
     StatsTagsPileup_second(tagsPileup, expand_size)
     plt.figure(3)    
