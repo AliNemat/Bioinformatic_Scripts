@@ -4,15 +4,13 @@ import matplotlib.pyplot as plt
 import math
 import numpy as np
 
-class Peak:
+class Motif_Loc:
     def __init__ (self): 
         self.idChr=[]
         self.firstBp=[]
         self.lastBp=[]
         self.centerBp=[]
         self.strandDir=[]
-        self.expandSize=None 
-
 
 class SamInfo:
     def __init__ (self): 
@@ -67,7 +65,7 @@ def AssessGenomeSize(MappedData):
          raise Exception ( 'probably your SAM file does not have a header. Please include a SAM file with a header')
     return numberBps
 
-
+## to do: does SAM file starts with zer0 or one? Now it is assumed it starts with zero
 def ParseSAMForChipexo (MappedData,numberBps,first_read_len): 
     samInfo = SamInfo() 
     for i in range (len(numberBps)):
@@ -84,48 +82,46 @@ def ParseSAMForChipexo (MappedData,numberBps,first_read_len):
             bitwiseFlagBinary  = int ( DecimalToBinary (bitwiseFlag) )
             if (NthDigit(bitwiseFlagBinary,7) == 1 and NthDigit(bitwiseFlagBinary,3) == 0 and mapq >= 20):     # read is first pair & read is not unmapped & mapping is accurate with 99% probability  
                 if (NthDigit(bitwiseFlagBinary,5) == 1): # bitwiseflag for negative strand
-                    samInfo.numTagsN [chrm - 1][left_most_basepair + first_read_len - 1] += 1 ## first_read_len is added to left_most_basepair to reach the 5' end of negative strand
+                    samInfo.numTagsN [chrm - 1][left_most_basepair + first_read_len] += 1 ## first_read_len is added to left_most_basepair to reach the 5' end of negative strand
                 else:
-                    samInfo.numTagsP [chrm - 1][left_most_basepair - 1] += 1                 ## left_most_basepair is already at the 5' end of positive strand
+                    samInfo.numTagsP [chrm - 1][left_most_basepair] += 1                 ## left_most_basepair is already at the 5' end of positive strand
       
     
     return samInfo
 
 
-def ParseBedFile (motifWindow):
-    peaks = Peak()
+def ParseGffFile (motifWindow):
+    motif_locs = Motif_Loc()
     for i in range (len(motifWindow)):
         tmpstring=str(motifWindow[i][0])
         if (tmpstring[0:3] == 'chr' and tmpstring != 'chrM'):
-            peaks.idChr.append     ( int (tmpstring[3:])   )
-            peaks.firstBp.append   ( int (motifWindow[i][1]) )
-            peaks.lastBp.append    ( int (motifWindow[i][2]) )
-            peaks.centerBp.append  ( int (0.5 * ( int (motifWindow[i][1]) + int (motifWindow[i][2]) ) )) 
-            peaks.strandDir.append ( str(motifWindow[i][5])  )
-    # Expansion size around peaks. It is costant for all the peaks in the bed file
-    peaks.expandSize = int (peaks.lastBp[0] - peaks.firstBp[0] + 1)  
-    return (peaks)
+            motif_locs.idChr.append     ( int (tmpstring[3:])   )
+            motif_locs.firstBp.append   ( int (motifWindow[i][3]) )
+            motif_locs.lastBp.append    ( int (motifWindow[i][4]) )
+            motif_locs.centerBp.append  ( int (0.5 * ( int (motifWindow[i][3]) + int (motifWindow[i][4]) ) )) 
+            motif_locs.strandDir.append ( str(motifWindow[i][6])  )
+    return (motif_locs)
 
     
-def CountPileupTags(samInfo,peaks,numberBps):
+def CountPileupTags(samInfo,motif_locs,numberBps, expand_size):
     tagsPileup = TagsPileup()
 
-    tagsPileup.P = [0 for x in range(peaks.expandSize)]
-    tagsPileup.N = [0 for x in range(peaks.expandSize)]
+    tagsPileup.P = [0 for x in range(-expand_size, expand_size + 1)]  # The range is [-250, 250] in total 501
+    tagsPileup.N = [0 for x in range(-expand_size, expand_size + 1)]
     
-    for i in range (len(peaks.centerBp)):
-        chrom = peaks.idChr[i]
-        ref   = peaks.centerBp[i]
-        for j in range (numberBps[chrom-1]):
-            if (j >= peaks.firstBp[i] and j <= peaks.lastBp[i] and peaks.strandDir[i] == '+'):
-                tagsPileup.P[j - ref + int(peaks.expandSize / 2) - 1] += samInfo.numTagsP[chrom - 1][j]
-            if (j >= peaks.firstBp[i] and j <= peaks.lastBp[i] and peaks.strandDir[i] == '-'):
-                tagsPileup.N[j - ref + int(peaks.expandSize / 2) - 1] += samInfo.numTagsN[chrom - 1][j]
+    for i in range (len(motif_locs.centerBp)):
+        chrom = motif_locs.idChr[i]
+        ref   = motif_locs.centerBp[i]
+        for j in range (numberBps[chrom - 1]):
+            if (j >= (motif_locs.centerBp[i] - expand_size) and j <= (motif_locs.centerBp[i] + expand_size) and motif_locs.strandDir[i] == '+'):
+                tagsPileup.P[j - ref + expand_size] += samInfo.numTagsP[chrom - 1][j]
+            if (j >= (motif_locs.centerBp[i] - expand_size) and j <= (motif_locs.centerBp[i] + expand_size) and motif_locs.strandDir[i] == '-'):
+                tagsPileup.N[j - ref + expand_size] += samInfo.numTagsN[chrom - 1][j]
     
     return tagsPileup
 
 
-def StatsTagsPileup_first(tagsPileup,halfExpandSize):
+def StatsTagsPileup_first(tagsPileup,expand_size):
     tagsPileup.avgDistN = 0.0
     tagsPileup.avgDistP = 0.0
     tagsPileup.stdDistN = 0.0 
@@ -141,19 +137,19 @@ def StatsTagsPileup_first(tagsPileup,halfExpandSize):
         tagsPileup.sumP += tagsPileup.P[i]
        
     for i in range (len (tagsPileup.N)):
-        tagsPileup.avgDistN += abs(i - halfExpandSize) * tagsPileup.N[i] /tagsPileup.sumN
+        tagsPileup.avgDistN += abs(i - expand_size) * tagsPileup.N[i] /tagsPileup.sumN
     for i in range (len ( tagsPileup.P)):
-        tagsPileup.avgDistP += abs(i - halfExpandSize) * tagsPileup.P[i] /tagsPileup.sumP
+        tagsPileup.avgDistP += abs(i - expand_size) * tagsPileup.P[i] /tagsPileup.sumP
     
     tmpSum = 0.0
     for i in range (len ( tagsPileup.N)):
-        tmpSum += ((abs(i - halfExpandSize) - tagsPileup.avgDistN) ** 2) * tagsPileup.N[i]
+        tmpSum += ((abs(i - expand_size) - tagsPileup.avgDistN) ** 2) * tagsPileup.N[i]
     
     tagsPileup.stdDistN = math.sqrt(tmpSum / (tagsPileup.sumN - 1))
     
     tmpSum = 0.0
     for i in range (len ( tagsPileup.P)):
-        tmpSum += ((abs(i - halfExpandSize) - tagsPileup.avgDistP) ** 2) * tagsPileup.P[i] 
+        tmpSum += ((abs(i - expand_size) - tagsPileup.avgDistP) ** 2) * tagsPileup.P[i] 
         
     tagsPileup.stdDistP = math.sqrt(tmpSum / (tagsPileup.sumP - 1))
     
@@ -163,15 +159,15 @@ def StatsTagsPileup_first(tagsPileup,halfExpandSize):
     print ( 'Average of tags distance from center of motif for negative strand is %s'            %(str(tagsPileup.avgDistN)))
 
 
-def StatsTagsPileup_second(tagsPileup,halfExpandSize):
+def StatsTagsPileup_second(tagsPileup,expand_size):
 
-    tagsPileup.Dist = [0 for i in range (halfExpandSize + 1)] #1 is added because the center might be different from left or right by one basepair
+    tagsPileup.Dist = [0 for i in range (expand_size + 1)] #1 is added because the center might be different from left or right by one basepair
     for i in range (len (tagsPileup.N)):
-        j = int (abs(i - halfExpandSize)) 
+        j = int (abs(i - expand_size)) 
         tagsPileup.Dist[j] += tagsPileup.N[i]
 
     for i in range (len (tagsPileup.P)):
-        j = int (abs(i - halfExpandSize)) 
+        j = int (abs(i - expand_size)) 
         tagsPileup.Dist[j] += tagsPileup.P[i]
     
     
@@ -186,19 +182,20 @@ def StatsTagsPileup_second(tagsPileup,halfExpandSize):
     return (tagsPileup)
 
 def main():
-    first_read_len  = 40 ## to do: this can be extracted from SAM file
-    bedFile         = ReadInputFile('Reb1_396_24465_Genetrack.bed')
-    peaks           = ParseBedFile (bedFile)
+    expand_size     = 250   # expansion size at the right and left side of the center of motif for plotting tag pileup
+    first_read_len  = 40  # to do: this should be extracted from SAM file
+    gffFile         = ReadInputFile('Reb1_396_24465_Genetrack.gff')
+    motif_locs      = ParseGffFile (gffFile)
     samFile         = ReadInputFile('Reb1_396_24465_Genetrack.sam')
     numberBps       = AssessGenomeSize(samFile)
     samInfo         = ParseSAMForChipexo (samFile,numberBps,first_read_len)
-    tagsPileup      = CountPileupTags (samInfo,peaks,numberBps) 
+    tagsPileup      = CountPileupTags (samInfo,motif_locs,numberBps, expand_size) 
 
-    StatsTagsPileup_first(tagsPileup, int(peaks.expandSize / 2))
-    StatsTagsPileup_second(tagsPileup, int(peaks.expandSize / 2))
+    StatsTagsPileup_first (tagsPileup, expand_size)
+    StatsTagsPileup_second(tagsPileup, expand_size)
     plt.figure(3)    
-    plt.plot (range (-1*int(peaks.expandSize / 2), int(peaks.expandSize / 2)) , tagsPileup.N,'r',label='Negative strand')  
-    plt.plot (range (-1*int(peaks.expandSize / 2), int(peaks.expandSize / 2)) , tagsPileup.P,'b',label='Positive strand') 
+    plt.plot (range (-expand_size, expand_size + 1) , tagsPileup.N,'r',label='Negative strand')  
+    plt.plot (range (-expand_size, expand_size + 1) , tagsPileup.P,'b',label='Positive strand') 
     plt.show()
 
 
