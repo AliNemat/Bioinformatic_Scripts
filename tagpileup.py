@@ -1,6 +1,8 @@
+from __future__ import division
 import csv 
 import matplotlib.pyplot as plt
 import math
+import numpy as np
 
 class Peak:
     def __init__ (self): 
@@ -22,6 +24,8 @@ class TagsPileup:
         self.N=[]
         self.P=[]
         self.Dist=[]
+        self.prob=[]
+        self.cumulative_prob=[]
         self.avgDistN=None
         self.avgDistP=None
         self.stdDistN=None
@@ -59,34 +63,37 @@ def AssessGenomeSize(MappedData):
         tmpString3=str(MappedData[i][2])
         if (tmpString2[3:6] == 'chr' and tmpString2[3:] != 'chrM'):
             numberBps.append (int(tmpString3[3:]))
-
+    if i == 0:
+         raise Exception ( 'probably your SAM file does not have a header. Please include a SAM file with a header')
     return numberBps
 
 
-def ParseSAMForChipexo (MappedData,numberBps): 
+def ParseSAMForChipexo (MappedData,numberBps,first_read_len): 
     samInfo = SamInfo() 
     for i in range (len(numberBps)):
-        samInfo.numTagsP.append ( [0 for j in range (numberBps[i])])
-        samInfo.numTagsN.append ( [0 for j in range (numberBps[i])])
+        samInfo.numTagsP.append ([0 for j in range (numberBps[i] + first_read_len )])
+        samInfo.numTagsN.append ([0 for j in range (numberBps[i] + first_read_len )])
 
     for i in range (len(MappedData)):
         tmpstring=str(MappedData[i][2])
         if (tmpstring[0:3] == 'chr' and tmpstring != 'chrM'):
-            chrm              = int (tmpstring[3:])
-            basepair          = int (MappedData[i][3])
-            bitwiseFlag       = int (MappedData[i][1])
-            bitwiseFlagBinary = int ( DecimalToBinary (bitwiseFlag) )
-            if ( NthDigit(bitwiseFlagBinary,7) == 1 and NthDigit(bitwiseFlagBinary,3) == 0 ):     # read is first pair & read is not unmapped  
+            chrm               = int (tmpstring[3:])
+            left_most_basepair = int (MappedData[i][3])
+            mapq               = int (MappedData[i][4])
+            bitwiseFlag        = int (MappedData[i][1])
+            bitwiseFlagBinary  = int ( DecimalToBinary (bitwiseFlag) )
+            if (NthDigit(bitwiseFlagBinary,7) == 1 and NthDigit(bitwiseFlagBinary,3) == 0 and mapq >= 20):     # read is first pair & read is not unmapped & mapping is accurate with 99% probability  
                 if (NthDigit(bitwiseFlagBinary,5) == 1): # bitwiseflag for negative strand
-                    samInfo.numTagsN [chrm-1][basepair-1] += 1
+                    samInfo.numTagsN [chrm - 1][left_most_basepair + first_read_len - 1] += 1 ## first_read_len is added to left_most_basepair to reach the 5' end of negative strand
                 else:
-                    samInfo.numTagsP [chrm-1][basepair-1] += 1
+                    samInfo.numTagsP [chrm - 1][left_most_basepair - 1] += 1                 ## left_most_basepair is already at the 5' end of positive strand
+      
     
     return samInfo
 
 
 def ParseBedFile (motifWindow):
-    peaks=Peak()
+    peaks = Peak()
     for i in range (len(motifWindow)):
         tmpstring=str(motifWindow[i][0])
         if (tmpstring[0:3] == 'chr' and tmpstring != 'chrM'):
@@ -96,7 +103,7 @@ def ParseBedFile (motifWindow):
             peaks.centerBp.append  ( int (0.5 * ( int (motifWindow[i][1]) + int (motifWindow[i][2]) ) )) 
             peaks.strandDir.append ( str(motifWindow[i][5])  )
     # Expansion size around peaks. It is costant for all the peaks in the bed file
-    peaks.expandSize=int (peaks.lastBp[0] - peaks.firstBp[0] + 1)  
+    peaks.expandSize = int (peaks.lastBp[0] - peaks.firstBp[0] + 1)  
     return (peaks)
 
     
@@ -128,10 +135,10 @@ def StatsTagsPileup_first(tagsPileup,halfExpandSize):
 
 
     for i in range (len (tagsPileup.N)):
-        tagsPileup.sumN +=tagsPileup.N[i]
+        tagsPileup.sumN += tagsPileup.N[i]
 
     for i in range (len (tagsPileup.P)):
-        tagsPileup.sumP +=tagsPileup.P[i]
+        tagsPileup.sumP += tagsPileup.P[i]
        
     for i in range (len (tagsPileup.N)):
         tagsPileup.avgDistN += abs(i - halfExpandSize) * tagsPileup.N[i] /tagsPileup.sumN
@@ -158,30 +165,38 @@ def StatsTagsPileup_first(tagsPileup,halfExpandSize):
 
 def StatsTagsPileup_second(tagsPileup,halfExpandSize):
 
-    tagsPileup.Dist=[0 for i in range (halfExpandSize + 1)] #1 is added because the center might be different from left or right by one basepair
+    tagsPileup.Dist = [0 for i in range (halfExpandSize + 1)] #1 is added because the center might be different from left or right by one basepair
     for i in range (len (tagsPileup.N)):
         j = int (abs(i - halfExpandSize)) 
         tagsPileup.Dist[j] += tagsPileup.N[i]
 
     for i in range (len (tagsPileup.P)):
-        j=int (abs(i - halfExpandSize)) 
+        j = int (abs(i - halfExpandSize)) 
         tagsPileup.Dist[j] += tagsPileup.P[i]
     
-    plt.plot (range (len(tagsPileup.Dist)) , tagsPileup.Dist,'r',label='Tags distribution based on distance from motif')  
+    
+    tagsPileup.prob = [float ( x / sum(tagsPileup.Dist)) for x in tagsPileup.Dist]
+    plt.figure(1)    
+    plt.plot (range (len(tagsPileup.prob)), tagsPileup.prob,'r', label = 'Tags probability distribution based on distance from motif')  
+    
+    tagsPileup.cumulative_prob = [float ( x / sum(tagsPileup.Dist)) for x in np.cumsum(tagsPileup.Dist)]
+    plt.figure(2)    
+    plt.plot (range (len(tagsPileup.cumulative_prob)), tagsPileup.cumulative_prob, 'b', label = 'Tags cumulative probability distribution based on distance from motif')  
 
     return (tagsPileup)
 
 def main():
-    bedFile         = ReadInputFile('MotifReb1.bed')
+    first_read_len  = 40 ## to do: this can be extracted from SAM file
+    bedFile         = ReadInputFile('Reb1_396_24465_Genetrack.bed')
     peaks           = ParseBedFile (bedFile)
-    samFile         = ReadInputFile('out.sam')
+    samFile         = ReadInputFile('Reb1_396_24465_Genetrack.sam')
     numberBps       = AssessGenomeSize(samFile)
-    samInfo         = ParseSAMForChipexo (samFile,numberBps)
+    samInfo         = ParseSAMForChipexo (samFile,numberBps,first_read_len)
     tagsPileup      = CountPileupTags (samInfo,peaks,numberBps) 
 
     StatsTagsPileup_first(tagsPileup, int(peaks.expandSize / 2))
     StatsTagsPileup_second(tagsPileup, int(peaks.expandSize / 2))
-
+    plt.figure(3)    
     plt.plot (range (-1*int(peaks.expandSize / 2), int(peaks.expandSize / 2)) , tagsPileup.N,'r',label='Negative strand')  
     plt.plot (range (-1*int(peaks.expandSize / 2), int(peaks.expandSize / 2)) , tagsPileup.P,'b',label='Positive strand') 
     plt.show()
